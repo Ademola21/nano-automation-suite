@@ -62,6 +62,7 @@ function solveTurnstileMin({ url, proxy }) {
 
       await page.goto(url, {
         waitUntil: "domcontentloaded",
+        timeout: 60000,
       });
 
       await page.waitForSelector('[name="cf-response"]', {
