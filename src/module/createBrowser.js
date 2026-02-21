@@ -7,13 +7,19 @@ async function createBrowser() {
 
         // console.log('Launching the browser...');
 
-        const { browser, page } = await connect({
-            headless: false,
+        const isLinux = process.platform === 'linux';
+        const browserConfig = {
+            headless: isLinux ? true : false,
             turnstile: true,
             connectOption: { defaultViewport: null },
             disableXvfb: false,
-            customConfig: { chromePath: 'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe' }
-        })
+        };
+
+        if (!isLinux) {
+            browserConfig.customConfig = { chromePath: 'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe' };
+        }
+
+        const { browser, page } = await connect(browserConfig);
 
         try {
             const session = await page.target().createCDPSession();

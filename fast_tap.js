@@ -119,6 +119,7 @@ class FastTapper {
                         console.log(`[INFO] Auto-session created: ${this.sessionToken.slice(0, 16)}...`);
                         fetched = true;
                     } else {
+                        console.error(`[ERROR] Session fetch failed completely (Direct + Fallback).`);
                         if (attempt < 3) {
                             console.log('[INFO] Retrying in 5 seconds...');
                             await new Promise(r => setTimeout(r, 5000));
