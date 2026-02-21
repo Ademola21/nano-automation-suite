@@ -408,6 +408,21 @@ function startRunner(acc, autoWithdrawEnabled, withdrawLimit, mainWalletAddress)
         });
     });
 
+    proc.stderr.on('data', (data) => {
+        if (!runners[acc.name]) return;
+        const rawData = data.toString();
+        const lines = rawData.split('\n').map(line => line.trim()).filter(Boolean);
+
+        lines.forEach(line => {
+            const logObj = { name: acc.name, msg: `[ERR] ${line}` };
+            runners[acc.name].logs.push(`[ERR] ${line}`);
+            pendingLogs.push(logObj);
+
+            if (runners[acc.name].logs.length > 50) runners[acc.name].logs.shift();
+            if (pendingLogs.length > 500) pendingLogs.shift();
+        });
+    });
+
     proc.on('close', (code) => {
         if (!runners[acc.name] || runners[acc.name].pid !== proc.pid) return; // Map might have been cleaned up or overwritten
         if (runners[acc.name].status !== 'bridged') {
