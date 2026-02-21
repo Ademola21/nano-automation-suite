@@ -35,15 +35,22 @@ async function broadcast(action, data, customTimeout = 15000) {
 async function getWork(hash) {
     console.log(`[CONSOLIDATOR] Requesting work for ${hash.slice(0, 8)}...`);
     try {
-        // Increase timeout to 30s for work generation
+        // Try remote RPC first
         const res = await broadcast('work_generate', { hash }, 45000);
-        if (!res || !res.work) {
-            console.error(`[CONSOLIDATOR] [ERROR] Node returned empty work for hash ${hash}`);
-            return null;
-        }
-        return res.work;
+        if (res && res.work) return res.work;
     } catch (e) {
-        console.log(`[CONSOLIDATOR] [WARN] Work generation failed: ${e.message}`);
+        console.log(`[CONSOLIDATOR] [WARN] Remote work generation failed: ${e.message}`);
+    }
+
+    // FALLBACK: Local PoW Calculation
+    console.log(`[CONSOLIDATOR] [LOCAL] Starting local PoW calculation for ${hash.slice(0, 8)}... (This may take a moment)`);
+    const start = Date.now();
+    try {
+        const work = await nano.computeWork(hash);
+        console.log(`[CONSOLIDATOR] [LOCAL] Local PoW solved in ${Date.now() - start}ms: ${work}`);
+        return work;
+    } catch (e) {
+        console.error(`[CONSOLIDATOR] [FATAL] Local PoW calculation failed: ${e.message}`);
         return null;
     }
 }
@@ -56,12 +63,26 @@ async function consolidate(seed, destination) {
     const address = nano.deriveAddress(publicKey).replace('xrb_', 'nano_');
 
     try {
-        // 1. Check for Pending blocks
-        console.log(`[CONSOLIDATOR] Checking for pending blocks for ${address}...`);
-        const pending = await broadcast('pending', { account: address, count: "5", threshold: "1" });
+        // 1. Check for Pending blocks with Retry Interlock
+        let pending = { blocks: {} };
+        const maxPendingAttempts = 5;
+
+        for (let attempt = 1; attempt <= maxPendingAttempts; attempt++) {
+            console.log(`[CONSOLIDATOR] Checking for pending blocks for ${address} (Attempt ${attempt}/${maxPendingAttempts})...`);
+            pending = await broadcast('pending', { account: address, count: "10", threshold: "1" });
+
+            if (pending.blocks && Object.keys(pending.blocks).length > 0) {
+                console.log(`[CONSOLIDATOR] Found ${Object.keys(pending.blocks).length} pending blocks!`);
+                break;
+            }
+
+            if (attempt < maxPendingAttempts) {
+                console.log(`[CONSOLIDATOR] No pending blocks yet. Waiting 10s for on-chain confirmation...`);
+                await new Promise(r => setTimeout(r, 10000));
+            }
+        }
 
         if (pending.blocks && Object.keys(pending.blocks).length > 0) {
-            console.log(`[CONSOLIDATOR] Found ${Object.keys(pending.blocks).length} pending blocks. Receiving...`);
 
             for (const hash of Object.keys(pending.blocks)) {
                 // Get account info for frontier
