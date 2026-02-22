@@ -1,7 +1,10 @@
 {
     "mainWalletAddress": "nano_3bq8i3qeku3busp6p3pqad8o3oorpnq9d3p6n5oeunzqwy7cc8q4dc4satad",
-    "proxyHost": "la.residential.rayobyte.com",
-    "proxyPort": "8000",
-    "proxyUser": "ayeyemiademola001_gmail_com",
-    "proxyPass": "Ademola5569"
+    "proxyMode": "brightdata",
+    "proxyHost": "brd.superproxy.io",
+    "proxyPort": "33335",
+    "proxyUser": "brd-customer-hl_abe74837-zone-datacenter_proxy1",
+    "proxyPass": "f0oh54nh9r33",
+    "referralCode": "Ademola",
+    "referralEnabled": true
 }

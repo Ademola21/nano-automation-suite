@@ -1,2 +1,12 @@
 node_modules
 !dashboard/dist/
+
+# Sensitive / per-machine config
+settings.json
+accounts.json
+active_sessions.json
+rescued_wallets.json
+
+# Test artifacts
+test_referral.js
+referral_test_results.txt

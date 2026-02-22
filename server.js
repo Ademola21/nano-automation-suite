@@ -25,6 +25,8 @@ const io = new Server(server, {
 const PORT = 4000;
 const ACCOUNTS_FILE = path.join(__dirname, 'accounts.json');
 const SETTINGS_FILE = path.join(__dirname, 'settings.json');
+const RESCUED_FILE = path.join(__dirname, 'rescued_wallets.json');
+const SESSIONS_FILE = path.join(__dirname, 'active_sessions.json');
 const NODES = [
     'https://rainstorm.city/api',
     'https://node.somenano.com/proxy',
@@ -50,12 +52,16 @@ let allAccounts = []; // Cache for accounts.json
 let pendingLogs = []; // Global log buffer for dashboard
 let settings = {
     mainWalletAddress: "",
-    proxyHost: "",
-    proxyPort: "",
-    proxyUser: "",
-    proxyPass: ""
+    proxyMode: "brightdata",
+    proxyHost: "brd.superproxy.io",
+    proxyPort: "33335",
+    proxyUser: "brd-customer-hl_abe74837-zone-datacenter_proxy1",
+    proxyPass: "f0oh54nh9r33",
+    referralCode: "",
+    referralEnabled: false
 };
 let solverProcess = null;
+let rescuedWallets = []; // Wallets that received funds but failed to consolidate
 
 // Load initial data
 if (fs.existsSync(ACCOUNTS_FILE)) {
@@ -68,6 +74,28 @@ if (fs.existsSync(SETTINGS_FILE)) {
     try {
         settings = { ...settings, ...JSON.parse(fs.readFileSync(SETTINGS_FILE, 'utf8')) };
     } catch (e) { console.error("Error loading settings:", e); }
+}
+
+if (fs.existsSync(RESCUED_FILE)) {
+    try {
+        rescuedWallets = JSON.parse(fs.readFileSync(RESCUED_FILE, 'utf8'));
+        console.log(`[SERVER] Loaded ${rescuedWallets.length} rescued wallets from disk.`);
+    } catch (e) { console.error("Error loading rescued wallets:", e); }
+}
+
+// Active sessions: map of workerName -> { sessionToken, proxyWalletSeed, proxyWalletAddress, earnings, proxy }
+let activeSessions = {};
+if (fs.existsSync(SESSIONS_FILE)) {
+    try {
+        activeSessions = JSON.parse(fs.readFileSync(SESSIONS_FILE, 'utf8'));
+        console.log(`[SERVER] Loaded ${Object.keys(activeSessions).length} saved sessions from disk.`);
+    } catch (e) { console.error("Error loading sessions:", e); }
+}
+
+function flushSessions() {
+    try {
+        fs.writeFileSync(SESSIONS_FILE, JSON.stringify(activeSessions, null, 2));
+    } catch (e) { console.error('[SERVER] Error saving sessions:', e.message); }
 }
 
 async function checkNodes() {
@@ -97,6 +125,37 @@ function flushAccountsToDisk() {
     } catch (e) {
         console.error(`[SERVER] Critical error flushing accounts: ${e.message}`);
     }
+}
+
+function flushRescuedWallets() {
+    try {
+        fs.writeFileSync(RESCUED_FILE, JSON.stringify(rescuedWallets, null, 4));
+        console.log(`[SERVER] Saved ${rescuedWallets.length} rescued wallets to disk.`);
+    } catch (e) {
+        console.error(`[SERVER] Error saving rescued wallets: ${e.message}`);
+    }
+}
+
+function rescueWallet(workerName) {
+    const acc = allAccounts.find(a => a.name === workerName);
+    if (!acc || !acc.wallet_seed) return;
+    // Don't double-rescue
+    if (rescuedWallets.find(w => w.seed === acc.wallet_seed)) return;
+
+    const earnings = runners[workerName]?.earnings || acc.earnings || 0;
+    if (earnings <= 0) return; // No point rescuing zero-balance wallets
+
+    const entry = {
+        name: workerName,
+        address: acc.wallet_address,
+        seed: acc.wallet_seed,
+        balance: earnings,
+        rescuedAt: new Date().toISOString()
+    };
+    rescuedWallets.push(entry);
+    flushRescuedWallets();
+    console.log(`[RESCUE] Saved wallet for ${workerName} (${earnings} nano) to rescue vault.`);
+    io.emit('rescue-updated', { count: rescuedWallets.length, totalBalance: rescuedWallets.reduce((s, w) => s + (w.balance || 0), 0), wallets: rescuedWallets });
 }
 
 // Periodic flush every 60 seconds
@@ -144,21 +203,38 @@ function startSolver() {
 }
 
 // Helper to inject unique session IDs into BrightData proxies
-function getRotatedProxy(baseProxy, workerName) {
+// Each worker gets a random session ID to guarantee a unique exit IP
+// Shared proxy session ID — all workers use the same IP
+let sharedProxySessionId = require('crypto').randomBytes(4).toString('hex');
+
+function getRotatedProxy(baseProxy) {
     if (!baseProxy) return '';
     try {
         const url = new URL(baseProxy);
-        // Only inject session ID for BrightData (which officially supports this format)
-        // Rayobyte and others may return 407 if the username is modified
         if (url.hostname.includes('superproxy') || url.username.includes('brd-customer')) {
-            if (!url.username.includes('-session-')) {
-                url.username = `${url.username}-session-${workerName}`;
-            }
+            // Strip any existing session ID and use the shared one
+            url.username = url.username.replace(/-session-[^:@]*/i, '');
+            url.username = `${url.username}-session-rand_${sharedProxySessionId}`;
         }
         return url.toString();
     } catch (e) {
         return baseProxy;
     }
+}
+
+function rotateSharedProxy() {
+    const oldId = sharedProxySessionId;
+    sharedProxySessionId = require('crypto').randomBytes(4).toString('hex');
+    console.log(`[FLEET] 🔄 Rotating ALL workers to new shared IP: rand_${sharedProxySessionId} (was rand_${oldId})`);
+    // Broadcast new session ID to ALL running workers via IPC
+    Object.keys(runners).forEach(name => {
+        const r = runners[name];
+        if (r && r.process && r.status === 'running') {
+            try {
+                r.process.send({ type: 'rotate-proxy', newSessionId: sharedProxySessionId });
+            } catch (e) { /* worker may have exited */ }
+        }
+    });
 }
 
 io.on('connection', (socket) => {
@@ -178,7 +254,8 @@ io.on('connection', (socket) => {
         accounts: activeAccounts,
         runners: activeNames.map(k => ({ name: k, status: runners[k].status })),
         nodeHealth,
-        settings
+        settings,
+        rescued: { count: rescuedWallets.length, totalBalance: rescuedWallets.reduce((s, w) => s + (w.balance || 0), 0), wallets: rescuedWallets }
     });
 
     socket.on('save-settings', (newSettings) => {
@@ -220,14 +297,14 @@ io.on('connection', (socket) => {
             nodeHealth
         });
 
-        // Staggered launch sequence (launch 1 worker every 5 seconds to spread initial load)
+        // Launch all workers simultaneously — they all share the same IP
+        console.log(`[FLEET] All workers sharing IP session: rand_${sharedProxySessionId}`);
         for (let i = 0; i < targetSize; i++) {
             const acc = slicedAccounts[i];
             const baseProxy = (defaultProxy && defaultProxy.trim()) ? defaultProxy : (acc.proxy || '');
-            const rotatedProxy = getRotatedProxy(baseProxy, acc.name);
+            const rotatedProxy = getRotatedProxy(baseProxy);
 
             startRunner({ ...acc, proxy: rotatedProxy }, autoWithdrawEnabled, withdrawLimit, mainWalletAddress);
-            await new Promise(r => setTimeout(r, 5000));
         }
     });
 
@@ -310,15 +387,24 @@ function saveAccountState(name, earnings) {
 function startRunner(acc, autoWithdrawEnabled, withdrawLimit, mainWalletAddress) {
     if (runners[acc.name] && runners[acc.name].status === 'running') return;
 
-    console.log(`[MASTER] Starting runner for ${acc.name} with AUTO token...`);
+    console.log(`[MASTER] Starting runner for ${acc.name}...`);
 
     // Address handles auto withdrawing to the main wallet
     const addr = (mainWalletAddress || '').replace('xrb_', 'nano_');
     const threshold = autoWithdrawEnabled ? withdrawLimit : 0;
 
-    // Pass 'AUTO' to instruct fast_tap.js to generate its own session token
+    // Check if we have a saved session for this worker
+    const saved = activeSessions[acc.name];
+    const sessionArg = (saved && saved.sessionToken) ? saved.sessionToken : 'AUTO';
+    if (saved && saved.sessionToken) {
+        console.log(`[MASTER] Resuming ${acc.name} with saved session: ${saved.sessionToken.slice(0, 16)}...`);
+    }
+
     // Resource Bounds: Cap memory to 128MB per worker to prevent host crashes
-    const proc = spawn('node', ['--max-old-space-size=128', 'fast_tap.js', 'AUTO', acc.proxy || '', addr, threshold.toString()], {
+    const refCode = (settings.referralEnabled && settings.referralCode) ? settings.referralCode : '';
+    const savedWalletSeed = (saved && saved.proxyWalletSeed) ? saved.proxyWalletSeed : '';
+    const savedWalletAddr = (saved && saved.proxyWalletAddress) ? saved.proxyWalletAddress : '';
+    const proc = spawn('node', ['--max-old-space-size=128', 'fast_tap.js', sessionArg, acc.proxy || '', addr, threshold.toString(), refCode, savedWalletSeed, savedWalletAddr], {
         stdio: ['pipe', 'pipe', 'pipe', 'ipc']
     });
 
@@ -330,6 +416,31 @@ function startRunner(acc, autoWithdrawEnabled, withdrawLimit, mainWalletAddress)
         proxyWallet: null,
         logs: []
     };
+
+    // Listen for IPC messages from workers (rate-limit signals + session info)
+    proc.on('message', (msg) => {
+        if (msg && msg.type === 'rate-limited') {
+            // Debounce: only rotate once per 5 seconds even if multiple workers signal
+            const now = Date.now();
+            if (!global._lastFleetRotation || (now - global._lastFleetRotation) > 5000) {
+                global._lastFleetRotation = now;
+                console.log(`[FLEET] Worker ${acc.name} hit rate limit — rotating ALL workers...`);
+                rotateSharedProxy();
+            }
+        } else if (msg && msg.type === 'session-info') {
+            // Worker reporting its session token and proxy wallet — save to disk
+            activeSessions[acc.name] = {
+                sessionToken: msg.sessionToken,
+                proxyWalletSeed: msg.proxyWalletSeed || '',
+                proxyWalletAddress: msg.proxyWalletAddress || '',
+                earnings: runners[acc.name]?.earnings || 0,
+                proxy: acc.proxy || '',
+                savedAt: new Date().toISOString()
+            };
+            flushSessions();
+            console.log(`[SESSION] Saved session for ${acc.name}: ${msg.sessionToken.slice(0, 16)}...`);
+        }
+    });
 
     proc.stdout.on('data', (data) => {
         if (!runners[acc.name]) return; // Safety check
@@ -386,9 +497,11 @@ function startRunner(acc, autoWithdrawEnabled, withdrawLimit, mainWalletAddress)
                     io.emit('runner-status', { name: acc.name, status: 'running' });
                 }
             }
-            if (line.includes('[CONSOLIDATOR ERROR]')) {
+            if (line.includes('[CONSOLIDATOR ERROR]') || line.includes('[FATAL]') || line.includes('Work generation failed')) {
                 runners[acc.name].status = 'bridge-error';
                 io.emit('runner-status', { name: acc.name, status: 'bridge-error' });
+                // RESCUE: Save the wallet so funds aren't lost
+                rescueWallet(acc.name);
             }
 
             // Store logs in memory and global buffer, skipping balance spam
@@ -468,6 +581,41 @@ app.get('/api/accounts', (req, res) => res.json(getAccounts()));
 app.post('/api/accounts', (req, res) => {
     fs.writeFileSync(ACCOUNTS_FILE, JSON.stringify(req.body, null, 2));
     io.emit('accounts-updated', req.body);
+    res.json({ success: true });
+});
+
+// Rescue Vault API
+app.get('/api/rescued-wallets', (req, res) => {
+    const totalBalance = rescuedWallets.reduce((s, w) => s + (w.balance || 0), 0);
+    res.json({ count: rescuedWallets.length, totalBalance, wallets: rescuedWallets });
+});
+
+app.get('/api/rescued-wallets/download', (req, res) => {
+    if (rescuedWallets.length === 0) return res.status(404).send('No rescued wallets.');
+
+    let text = `RESCUED WALLETS - ${new Date().toISOString()}\n`;
+    text += `Total Wallets: ${rescuedWallets.length}\n`;
+    text += `Total Balance: ${rescuedWallets.reduce((s, w) => s + (w.balance || 0), 0)} nano\n`;
+    text += '='.repeat(80) + '\n\n';
+
+    rescuedWallets.forEach((w, i) => {
+        text += `${i + 1}.\n`;
+        text += `  Worker:  ${w.name}\n`;
+        text += `  Address: ${w.address}\n`;
+        text += `  Seed:    ${w.seed}\n`;
+        text += `  Balance: ${w.balance} nano\n`;
+        text += `  Rescued: ${w.rescuedAt}\n\n`;
+    });
+
+    res.setHeader('Content-Type', 'text/plain');
+    res.setHeader('Content-Disposition', 'attachment; filename="rescued_wallets.txt"');
+    res.send(text);
+});
+
+app.delete('/api/rescued-wallets', (req, res) => {
+    rescuedWallets = [];
+    flushRescuedWallets();
+    io.emit('rescue-updated', { count: 0, totalBalance: 0, wallets: [] });
     res.json({ success: true });
 });
 

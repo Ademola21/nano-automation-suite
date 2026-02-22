@@ -46,6 +46,58 @@ class FastTapper {
         return { seed, address };
     }
 
+    // Rotate BrightData session ID to get a new IP
+    rotateProxy() {
+        if (!this.proxy) return;
+        const oldProxy = this.proxy;
+        // Replace the session ID in the proxy URL to get a new IP
+        // Format: brd-customer-xxx-session-rand_XXXXXXXX
+        const newSessionId = crypto.randomBytes(4).toString('hex');
+        this.proxy = this.proxy.replace(
+            /(-session-[^:@]+)/i,
+            `-session-rand_${newSessionId}`
+        );
+        // If no session was in the proxy string, append one to the username
+        if (this.proxy === oldProxy && this.proxy.includes('brd-customer')) {
+            this.proxy = this.proxy.replace(
+                /(brd-customer-[^:]+)/,
+                `$1-session-rand_${newSessionId}`
+            );
+        }
+        console.log(`[PROXY] Rotated session ID to: rand_${newSessionId}`);
+    }
+
+    // Verify current proxy IP using a public IP check service
+    async verifyNewIP() {
+        if (!this.proxy) return null;
+        try {
+            const reqOpts = {
+                timeout: 15000,
+                httpsAgent: new HttpsProxyAgent(this.proxy)
+            };
+            // Use httpbin which works with BrightData (not Google-blocked)
+            const res = await axios.get('https://lumtest.com/myip.json', reqOpts);
+            const ip = res.data?.ip || res.data;
+            console.log(`[PROXY] Verified new IP: ${ip}`);
+            return ip;
+        } catch (e) {
+            // Fallback to another service
+            try {
+                const reqOpts2 = {
+                    timeout: 15000,
+                    httpsAgent: new HttpsProxyAgent(this.proxy)
+                };
+                const res2 = await axios.get('https://api.ipify.org?format=json', reqOpts2);
+                const ip = res2.data?.ip;
+                console.log(`[PROXY] Verified new IP (fallback): ${ip}`);
+                return ip;
+            } catch (e2) {
+                console.warn(`[PROXY] Could not verify IP: ${e2.message}`);
+                return null;
+            }
+        }
+    }
+
     async start() {
         if (this.starting) return;
         this.starting = true;
@@ -73,10 +125,14 @@ class FastTapper {
                         reqOpts.httpsAgent = new HttpsProxyAgent(this.proxy);
                     }
 
+                    const sessionUrl = referralCode
+                        ? `https://api.thenanobutton.com/api/session?ref=${encodeURIComponent(referralCode)}`
+                        : 'https://api.thenanobutton.com/api/session';
+                    if (referralCode) console.log(`[REF] Using referral code: ${referralCode}`);
                     console.log(`[INFO] Attempting session fetch (Attempt ${attempt}/3)...`);
                     let data;
                     try {
-                        const res = await axios.get('https://api.thenanobutton.com/api/session', reqOpts);
+                        const res = await axios.get(sessionUrl, reqOpts);
                         data = res.data;
                     } catch (axiosErr) {
                         const status = axiosErr.response ? axiosErr.response.status : 'NETWORK_ERROR';
@@ -141,9 +197,25 @@ class FastTapper {
 
         // Initialize Proxy Wallet if we have a destination
         if (this.withdrawAddress && !this.proxyWallet) {
-            this.proxyWallet = await this.generateProxyWallet();
-            console.log(`[INFO] Proxy Wallet generated for session: ${this.proxyWallet.address}`);
+            // Check if a saved wallet was passed via CLI
+            if (savedWalletSeed && savedWalletAddr) {
+                this.proxyWallet = { seed: savedWalletSeed, address: savedWalletAddr };
+                console.log(`[INFO] Restored saved Proxy Wallet: ${this.proxyWallet.address}`);
+            } else {
+                this.proxyWallet = await this.generateProxyWallet();
+                console.log(`[INFO] Proxy Wallet generated for session: ${this.proxyWallet.address}`);
+            }
         }
+
+        // Report session info to server for persistence
+        try {
+            process.send({
+                type: 'session-info',
+                sessionToken: this.sessionToken,
+                proxyWalletSeed: this.proxyWallet?.seed || '',
+                proxyWalletAddress: this.proxyWallet?.address || ''
+            });
+        } catch (e) { /* not running under IPC */ }
 
         this.starting = false;
         const urlWithToken = `${WS_URL}?token=${this.sessionToken}`;
@@ -189,7 +261,8 @@ class FastTapper {
                     console.log(`[INFO] Current Balance: ${this.balance} Nano-units`);
                 } else if (json.type === 'limit' || json.type === 'hourly_limit') {
                     const msg = json.message || 'Limit reached';
-                    console.log(`[ALERT] Rate limit reached: ${msg}. Reconnecting Proxy...`);
+                    console.log(`[ALERT] Rate limit reached: ${msg}`);
+                    this._rateLimited = true; // Flag for the close handler
                     this.ws.close();
                 }
                 else if (json.type === 'click') {
@@ -217,12 +290,31 @@ class FastTapper {
             console.error(`[WS ERROR] ${err.message}`);
         });
 
-        this.ws.on('close', () => {
+        this.ws.on('close', async () => {
             console.log('[WS] Disconnected.');
             clearInterval(this.tapInterval);
             if (!this.halted) {
-                console.log('[WS] Reconnecting in 5s...');
-                setTimeout(() => this.start(), 5000);
+                if (this._rateLimited) {
+                    this._rateLimited = false;
+                    console.log('[FLEET] Rate limited — signaling server to rotate ALL workers...');
+                    // Signal the server to rotate all workers to a new shared IP
+                    try { process.send({ type: 'rate-limited' }); } catch (e) { }
+                    // Don't reconnect here — wait for the server to send 'rotate-proxy' IPC
+                    // which will trigger reconnection with the new shared IP
+                    this._waitingForRotation = true;
+                    // Safety timeout: if server doesn't respond in 15s, self-rotate
+                    this._rotationTimeout = setTimeout(() => {
+                        if (this._waitingForRotation) {
+                            console.log('[FLEET] ⚠️ No rotation signal from server, self-rotating...');
+                            this._waitingForRotation = false;
+                            this.rotateProxy();
+                            this.start();
+                        }
+                    }, 15000);
+                } else {
+                    console.log('[WS] Reconnecting in 5s...');
+                    setTimeout(() => this.start(), 5000);
+                }
             }
         });
 
@@ -418,6 +510,9 @@ const token = process.argv[2] || 'YOUR_SESSION_TOKEN_HERE';
 const proxy = process.argv[3] || null;
 const address = process.argv[4] || null;
 const threshold = parseInt(process.argv[5]) || 0;
+const referralCode = process.argv[6] || '';
+const savedWalletSeed = process.argv[7] || '';
+const savedWalletAddr = process.argv[8] || '';
 
 const tapper = new FastTapper(token, proxy);
 tapper.withdrawAddress = address;
@@ -453,5 +548,36 @@ process.on('message', (msg) => {
 
         console.log(`[INFO] Emergency sweep received. Initiating withdrawal...`);
         tapper.performWithdrawal();
+    } else if (msg.type === 'rotate-proxy') {
+        // Server is telling us to rotate to a new shared IP
+        const newSessionId = msg.newSessionId;
+        console.log(`[FLEET] 🔄 Rotating to new shared IP: rand_${newSessionId}`);
+
+        // Update the proxy string with the new session ID
+        if (tapper.proxy) {
+            tapper.proxy = tapper.proxy.replace(
+                /(-session-[^:@]+)/i,
+                `-session-rand_${newSessionId}`
+            );
+        }
+
+        // Cancel safety timeout if pending
+        if (tapper._rotationTimeout) {
+            clearTimeout(tapper._rotationTimeout);
+            tapper._rotationTimeout = null;
+        }
+
+        // If we were waiting for rotation, reconnect now
+        if (tapper._waitingForRotation) {
+            tapper._waitingForRotation = false;
+            console.log(`[FLEET] ✅ New IP assigned. Reconnecting with same session (balance preserved)...`);
+            tapper.start();
+        } else {
+            // We're currently connected — close and reconnect with new IP
+            if (tapper.ws && tapper.ws.readyState === WebSocket.OPEN) {
+                console.log(`[FLEET] Disconnecting to switch to new IP...`);
+                tapper.ws.close();
+            }
+        }
     }
 });

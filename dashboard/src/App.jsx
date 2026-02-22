@@ -15,7 +15,9 @@ import {
   Server,
   Layers,
   Power,
-  CheckCircle2
+  CheckCircle2,
+  Download,
+  AlertTriangle
 } from 'lucide-react';
 
 const socket = io(window.location.origin);
@@ -25,15 +27,20 @@ function App() {
   const [runners, setRunners] = useState({});
   const [nodeHealth, setNodeHealth] = useState({});
   const [mainWalletAddress, setMainWalletAddress] = useState('');
-  const [proxyHost, setProxyHost] = useState('');
-  const [proxyPort, setProxyPort] = useState('');
-  const [proxyUser, setProxyUser] = useState('');
-  const [proxyPass, setProxyPass] = useState('');
+  const [proxyHost, setProxyHost] = useState('brd.superproxy.io');
+  const [proxyPort, setProxyPort] = useState('33335');
+  const [proxyUser, setProxyUser] = useState('brd-customer-hl_abe74837-zone-datacenter_proxy1');
+  const [proxyPass, setProxyPass] = useState('f0oh54nh9r33');
+  const [proxyMode, setProxyMode] = useState('brightdata');
   const [editProxy, setEditProxy] = useState(false);
   const [editWallet, setEditWallet] = useState(false);
   const [globalStats, setGlobalStats] = useState({ totalEarned: 0, activeCount: 0 });
   const [logs, setLogs] = useState([]);
   const [showLogs, setShowLogs] = useState(false);
+  const [rescuedWallets, setRescuedWallets] = useState([]);
+  const [rescuedTotal, setRescuedTotal] = useState(0);
+  const [referralCode, setReferralCode] = useState('');
+  const [referralEnabled, setReferralEnabled] = useState(false);
 
   // Config State
   const [activeTab, setActiveTab] = useState('execution');
@@ -44,7 +51,7 @@ function App() {
   const [defaultProxy, setDefaultProxy] = useState('');
 
   useEffect(() => {
-    socket.on('init', ({ accounts, runners, nodeHealth, settings }) => {
+    socket.on('init', ({ accounts, runners, nodeHealth, settings, rescued }) => {
       setAccounts(accounts);
       const runnerMap = {};
       runners.forEach(r => runnerMap[r.name] = r);
@@ -52,15 +59,23 @@ function App() {
       if (nodeHealth) setNodeHealth(nodeHealth);
       if (settings) {
         setMainWalletAddress(settings.mainWalletAddress || '');
-        setProxyHost(settings.proxyHost || '');
-        setProxyPort(settings.proxyPort || '');
+        setProxyMode(settings.proxyMode || 'brightdata');
+        setProxyHost(settings.proxyHost || 'brd.superproxy.io');
+        setProxyPort(settings.proxyPort || '33335');
         setProxyUser(settings.proxyUser || '');
         setProxyPass(settings.proxyPass || '');
+        setReferralCode(settings.referralCode || '');
+        setReferralEnabled(settings.referralEnabled || false);
+      }
+      if (rescued) {
+        setRescuedWallets(rescued.wallets || []);
+        setRescuedTotal(rescued.totalBalance || 0);
       }
     });
 
     socket.on('settings-updated', (s) => {
       setMainWalletAddress(s.mainWalletAddress || '');
+      setProxyMode(s.proxyMode || 'brightdata');
       setProxyHost(s.proxyHost || '');
       setProxyPort(s.proxyPort || '');
       setProxyUser(s.proxyUser || '');
@@ -110,6 +125,11 @@ function App() {
 
     socket.on('node-health', (health) => setNodeHealth(health));
 
+    socket.on('rescue-updated', (data) => {
+      setRescuedWallets(data.wallets || []);
+      setRescuedTotal(data.totalBalance || 0);
+    });
+
     return () => socket.off();
   }, []);
 
@@ -133,10 +153,13 @@ function App() {
   const saveGlobalSettings = () => {
     socket.emit('save-settings', {
       mainWalletAddress,
+      proxyMode,
       proxyHost,
       proxyPort,
       proxyUser,
-      proxyPass
+      proxyPass,
+      referralCode,
+      referralEnabled
     });
     setEditProxy(false);
     setEditWallet(false);
@@ -182,6 +205,15 @@ function App() {
         >
           <Wallet className="inline-block mr-2 size-4" /> Master Wallet Hub
         </button>
+        <button
+          className={`px-8 py-3 rounded-xl font-black text-sm tracking-widest transition-all relative ${activeTab === 'rescue' ? 'bg-red-500/20 text-red-400 border border-red-500/50' : 'bg-white/5 text-text-dim hover:bg-white/10'}`}
+          onClick={() => setActiveTab('rescue')}
+        >
+          <AlertTriangle className="inline-block mr-2 size-4" /> Rescue Vault
+          {rescuedWallets.length > 0 && (
+            <span className="absolute -top-1 -right-1 bg-red-500 text-white text-[9px] font-black rounded-full w-5 h-5 flex items-center justify-center">{rescuedWallets.length}</span>
+          )}
+        </button>
       </div>
 
       <div className="stats-grid mb-8">
@@ -219,7 +251,7 @@ function App() {
               {/* PROXY CONFIG */}
               <div className="bg-black/30 p-4 rounded-xl border border-white/5 relative overflow-hidden">
                 <div className="flex justify-between items-center mb-4">
-                  <label className="text-xs font-bold text-text-dim uppercase tracking-wider">Global Proxy Hub</label>
+                  <label className="text-xs font-bold text-text-dim uppercase tracking-wider">Proxy Configuration</label>
                   <button
                     onClick={() => editProxy ? saveGlobalSettings() : setEditProxy(true)}
                     className={`px-3 py-1 rounded text-[10px] font-bold border transition-all ${editProxy ? 'bg-green-500/20 text-green-400 border-green-500/50' : 'bg-white/5 text-text-dim border-white/10 hover:bg-white/10'}`}
@@ -227,6 +259,51 @@ function App() {
                     {editProxy ? 'SAVE CONFIG' : 'EDIT'}
                   </button>
                 </div>
+
+                {/* Proxy Mode Selector */}
+                <div className="flex gap-2 mb-4">
+                  <button
+                    onClick={() => {
+                      if (!editProxy) return;
+                      setProxyMode('brightdata');
+                      setProxyHost('brd.superproxy.io');
+                      setProxyPort('33335');
+                      setProxyUser('brd-customer-hl_abe74837-zone-datacenter_proxy1');
+                      setProxyPass('f0oh54nh9r33');
+                    }}
+                    className={`flex-1 py-2 rounded-lg text-[10px] font-black tracking-widest uppercase transition-all border ${proxyMode === 'brightdata'
+                      ? 'bg-orange-500/20 text-orange-400 border-orange-500/50'
+                      : 'bg-white/5 text-text-dim border-white/10 hover:bg-white/10'
+                      }`}
+                  >
+                    ⚡ BrightData
+                  </button>
+                  <button
+                    onClick={() => {
+                      if (!editProxy) return;
+                      setProxyMode('manual');
+                      setProxyHost('');
+                      setProxyPort('');
+                      setProxyUser('');
+                      setProxyPass('');
+                    }}
+                    className={`flex-1 py-2 rounded-lg text-[10px] font-black tracking-widest uppercase transition-all border ${proxyMode === 'manual'
+                      ? 'bg-purple-500/20 text-purple-400 border-purple-500/50'
+                      : 'bg-white/5 text-text-dim border-white/10 hover:bg-white/10'
+                      }`}
+                  >
+                    ⚙️ Manual
+                  </button>
+                </div>
+
+                {proxyMode === 'brightdata' && (
+                  <div className="bg-orange-500/5 border border-orange-500/20 rounded-lg p-3 mb-3">
+                    <div className="flex items-center gap-2 mb-2">
+                      <span className="text-orange-400 text-[10px] font-bold uppercase tracking-wider">⚡ BrightData Rotating Proxy</span>
+                    </div>
+                    <p className="text-[9px] text-text-dim/60 mb-2">Session IDs are auto-injected per worker for unique IPs.</p>
+                  </div>
+                )}
 
                 <div className="space-y-3">
                   <div className="grid grid-cols-3 gap-2">
@@ -276,7 +353,11 @@ function App() {
                     </div>
                   </div>
                 </div>
-                <p className="text-[9px] text-text-dim/40 mt-3 italic leading-tight">Configures all workers with session-isolation for BrightData/Residential pools.</p>
+                <p className="text-[9px] text-text-dim/40 mt-3 italic leading-tight">
+                  {proxyMode === 'brightdata'
+                    ? 'Each worker gets a unique session ID (-session-rand_XXXX) for IP isolation.'
+                    : 'Enter your custom proxy details. Session injection only applies to BrightData-compatible proxies.'}
+                </p>
               </div>
 
               {/* MASTER WALLET CONFIG */}
@@ -299,6 +380,48 @@ function App() {
                   disabled={!editWallet}
                 />
                 <p className="text-[9px] text-text-dim/40 mt-3 italic leading-tight">This address receives all consolidated funds from session proxy wallets.</p>
+              </div>
+
+              {/* REFERRAL CODE CONFIG */}
+              <div className="bg-black/30 p-4 rounded-xl border border-white/5">
+                <div className="flex justify-between items-center mb-4">
+                  <label className="text-xs font-bold text-text-dim uppercase tracking-wider flex items-center gap-2">
+                    🔗 Referral Code
+                    <span className={`text-[9px] px-2 py-0.5 rounded-full font-black tracking-wider ${referralEnabled ? 'bg-green-500/20 text-green-400' : 'bg-red-500/20 text-red-400'}`}>
+                      {referralEnabled ? 'ACTIVE' : 'OFF'}
+                    </span>
+                  </label>
+                  <button
+                    onClick={() => {
+                      const next = !referralEnabled;
+                      setReferralEnabled(next);
+                      socket.emit('save-settings', { ...{ mainWalletAddress, proxyMode, proxyHost, proxyPort, proxyUser, proxyPass, referralCode, referralEnabled: next } });
+                    }}
+                    className={`px-3 py-1 rounded text-[10px] font-bold border transition-all ${referralEnabled ? 'bg-green-500/20 text-green-400 border-green-500/50' : 'bg-white/5 text-text-dim border-white/10 hover:bg-white/10'}`}
+                  >
+                    {referralEnabled ? 'TURN OFF' : 'TURN ON'}
+                  </button>
+                </div>
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    placeholder="Enter your invite code (e.g. abc123)"
+                    className="input-field flex-1 font-mono text-[11px] py-2"
+                    value={referralCode}
+                    onChange={(e) => setReferralCode(e.target.value)}
+                  />
+                  <button
+                    onClick={() => {
+                      socket.emit('save-settings', { ...{ mainWalletAddress, proxyMode, proxyHost, proxyPort, proxyUser, proxyPass, referralCode, referralEnabled } });
+                    }}
+                    className="px-4 py-2 rounded-lg text-[10px] font-bold border bg-cyan-500/20 text-cyan-400 border-cyan-500/50 hover:bg-cyan-500/30 transition-all"
+                  >
+                    SAVE
+                  </button>
+                </div>
+                <p className="text-[9px] text-text-dim/40 mt-3 italic leading-tight">
+                  When enabled, every worker session is created with your referral code. You earn 100% of every click your workers make, plus a one-time bonus per new session.
+                </p>
               </div>
 
               <div className="bg-black/30 p-4 rounded-xl border border-white/5">
@@ -461,7 +584,7 @@ function App() {
               </AnimatePresence>
             </section>
           </motion.div>
-        ) : (
+        ) : activeTab === 'wallet' ? (
           <motion.div
             key="wallet"
             initial={{ opacity: 0, x: -20 }}
@@ -539,7 +662,86 @@ function App() {
               </div>
             </section>
           </motion.div>
-        )}
+        ) : activeTab === 'rescue' ? (
+          <motion.div
+            key="rescue"
+            initial={{ opacity: 0, x: -20 }}
+            animate={{ opacity: 1, x: 0 }}
+            exit={{ opacity: 0, x: 20 }}
+            className="max-w-4xl mx-auto"
+          >
+            <section className="glass-panel">
+              <h2 className="text-2xl font-black flex items-center border-b border-white/10 pb-4 mb-6">
+                <AlertTriangle className="mr-3 size-6" color="#ff4444" /> RESCUE VAULT
+              </h2>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
+                <div className="bg-red-500/5 border border-red-500/20 rounded-xl p-6 text-center">
+                  <div className="text-[10px] font-bold text-red-400 uppercase tracking-wider mb-2">Rescued Wallets</div>
+                  <div className="text-4xl font-black text-red-400 font-mono">{rescuedWallets.length}</div>
+                </div>
+                <div className="bg-orange-500/5 border border-orange-500/20 rounded-xl p-6 text-center">
+                  <div className="text-[10px] font-bold text-orange-400 uppercase tracking-wider mb-2">Total Rescued Balance</div>
+                  <div className="text-4xl font-black text-orange-400 font-mono">{formatNano(rescuedTotal)} <span className="text-lg">NANO</span></div>
+                </div>
+              </div>
+
+              <p className="text-xs text-text-dim mb-4 leading-relaxed">
+                These wallets received funds from the faucet but failed to consolidate to the master wallet. Their seeds are preserved here so you can recover the funds manually.
+              </p>
+
+              <div className="flex gap-3 mb-6">
+                <a
+                  href="/api/rescued-wallets/download"
+                  className={`flex-1 py-3 rounded-lg font-black tracking-widest uppercase transition-all flex items-center justify-center border ${rescuedWallets.length > 0
+                    ? 'bg-cyan-500/20 text-cyan-400 border-cyan-500/50 hover:bg-cyan-500/30 glow-cyan cursor-pointer'
+                    : 'bg-white/5 text-text-dim/30 border-white/5 cursor-not-allowed'
+                    }`}
+                >
+                  <Download className="mr-2 size-4" /> Download All Seeds
+                </a>
+                <button
+                  onClick={async () => {
+                    if (rescuedWallets.length === 0) return;
+                    if (!window.confirm('Clear rescue vault? Make sure you downloaded the seeds first!')) return;
+                    await fetch('/api/rescued-wallets', { method: 'DELETE' });
+                  }}
+                  className={`px-6 py-3 rounded-lg font-black tracking-widest uppercase transition-all flex items-center justify-center border ${rescuedWallets.length > 0
+                    ? 'bg-red-500/20 text-red-400 border-red-500/50 hover:bg-red-500/30'
+                    : 'bg-white/5 text-text-dim/30 border-white/5 cursor-not-allowed'
+                    }`}
+                >
+                  Clear
+                </button>
+              </div>
+
+              {rescuedWallets.length > 0 ? (
+                <div className="space-y-3 max-h-[500px] overflow-y-auto pr-2">
+                  {rescuedWallets.map((w, i) => (
+                    <div key={i} className="bg-black/40 rounded-xl border border-white/5 p-4 hover:border-red-500/20 transition-colors">
+                      <div className="flex justify-between items-center mb-2">
+                        <span className="text-xs font-black text-red-400">#{i + 1} &mdash; {w.name}</span>
+                        <span className="text-[10px] font-mono text-orange-400 font-bold">{w.balance} NANO</span>
+                      </div>
+                      <div className="space-y-1">
+                        <div className="text-[9px] text-text-dim/60">ADDRESS</div>
+                        <div className="text-[10px] font-mono text-text-dim break-all">{w.address}</div>
+                        <div className="text-[9px] text-text-dim/60 mt-2">SEED</div>
+                        <div className="text-[10px] font-mono text-yellow-400/80 break-all">{w.seed}</div>
+                        <div className="text-[8px] text-text-dim/40 mt-1">Rescued: {new Date(w.rescuedAt).toLocaleString()}</div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="text-center py-16">
+                  <CheckCircle2 className="size-16 text-green-500/30 mx-auto mb-4" />
+                  <p className="text-sm text-text-dim/60">No rescued wallets. All consolidations successful!</p>
+                </div>
+              )}
+            </section>
+          </motion.div>
+        ) : null}
       </AnimatePresence>
     </div>
   );

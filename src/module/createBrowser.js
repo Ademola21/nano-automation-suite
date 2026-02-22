@@ -19,7 +19,12 @@ async function createBrowser() {
                     '--disable-gpu',
                     '--disable-web-security',
                     '--disable-site-isolation-trials',
-                    '--disable-blink-features=AutomationControlled'
+                    '--disable-blink-features=AutomationControlled',
+                    '--disable-background-networking',
+                    '--disable-default-apps',
+                    '--disable-sync',
+                    '--disable-extensions',
+                    '--disable-component-update'
                 ] : [
                     '--disable-blink-features=AutomationControlled',
                     '--no-first-run',
@@ -29,7 +34,12 @@ async function createBrowser() {
                     '--ignore-certificate-errors',
                     '--disable-web-security',
                     '--disable-site-isolation-trials',
-                    '--disable-features=TrackingPrevention,EdgeTrackingPrevention,IsolateOrigins,site-per-process'
+                    '--disable-features=TrackingPrevention,EdgeTrackingPrevention,IsolateOrigins,site-per-process',
+                    '--disable-background-networking',
+                    '--disable-default-apps',
+                    '--disable-sync',
+                    '--disable-extensions',
+                    '--disable-component-update'
                 ]
             },
             disableXvfb: false,

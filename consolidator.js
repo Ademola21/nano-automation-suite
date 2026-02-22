@@ -2,11 +2,13 @@ const nano = require('nanocurrency');
 const axios = require('axios');
 
 const NODES = [
+    'https://rainstorm.city/api',
+    'https://node.somenano.com/proxy',
     'https://nanoslo.0x.no/proxy',
-    'https://rainstorm.city/api'
+    'https://uk1.public.xnopay.com/proxy'
 ];
 
-async function broadcast(action, data, customTimeout = 5000) {
+async function broadcast(action, data, customTimeout = 10000) {
     let lastError = null;
     for (const url of NODES) {
         try {
@@ -30,12 +32,25 @@ async function broadcast(action, data, customTimeout = 5000) {
 
 async function getWork(hash) {
     console.log(`[CONSOLIDATOR] [REMOTE] Generating PoW for ${hash.slice(0, 8)}...`);
-    try {
-        const res = await broadcast('work_generate', { hash }, 8000);
-        if (res && res.work) return res.work;
-    } catch (e) {
-        console.log(`[CONSOLIDATOR] [FATAL] Remote PoW generation failed: ${e.message}`);
+    // Try up to 3 times with increasing timeout
+    const attempts = [30000, 45000, 60000];
+    for (let i = 0; i < attempts.length; i++) {
+        try {
+            console.log(`[CONSOLIDATOR] [POW] Attempt ${i + 1}/${attempts.length} (timeout: ${attempts[i] / 1000}s)...`);
+            const res = await broadcast('work_generate', { hash }, attempts[i]);
+            if (res && res.work) {
+                console.log(`[CONSOLIDATOR] [POW] Work generated on attempt ${i + 1}!`);
+                return res.work;
+            }
+        } catch (e) {
+            console.log(`[CONSOLIDATOR] [POW] Attempt ${i + 1} failed: ${e.message}`);
+            if (i < attempts.length - 1) {
+                console.log(`[CONSOLIDATOR] [POW] Retrying in 3s...`);
+                await new Promise(r => setTimeout(r, 3000));
+            }
+        }
     }
+    console.log(`[CONSOLIDATOR] [FATAL] Remote PoW generation failed after all retries.`);
     return null;
 }
 
@@ -49,7 +64,7 @@ async function consolidate(seed, destination) {
     try {
         // 1. Check for Pending blocks with Retry Interlock
         let pending = { blocks: {} };
-        const maxPendingAttempts = 5;
+        const maxPendingAttempts = 8;
 
         for (let attempt = 1; attempt <= maxPendingAttempts; attempt++) {
             console.log(`[CONSOLIDATOR] Checking for pending blocks for ${address} (Attempt ${attempt}/${maxPendingAttempts})...`);
@@ -61,8 +76,9 @@ async function consolidate(seed, destination) {
             }
 
             if (attempt < maxPendingAttempts) {
-                console.log(`[CONSOLIDATOR] No pending blocks yet. Waiting 10s for on-chain confirmation...`);
-                await new Promise(r => setTimeout(r, 10000));
+                const waitTime = attempt <= 3 ? 10000 : 15000; // Wait longer on later attempts
+                console.log(`[CONSOLIDATOR] No pending blocks yet. Waiting ${waitTime / 1000}s for on-chain confirmation...`);
+                await new Promise(r => setTimeout(r, waitTime));
             }
         }
 
@@ -90,7 +106,7 @@ async function consolidate(seed, destination) {
                 const receiveBlock = nano.createBlock(privateKey, {
                     work: work,
                     previous: info.frontier,
-                    representative: address, // Set self as representative for temporary wallets
+                    representative: address,
                     balance: newBalance,
                     link: hash
                 });

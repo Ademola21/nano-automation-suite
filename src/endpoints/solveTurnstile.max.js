@@ -42,6 +42,7 @@ function solveTurnstileMax({ url, proxy }) {
           password: proxy.password,
         });
 
+
       // Injection to capture the response token
       await page.evaluateOnNewDocument(() => {
         let token = null;

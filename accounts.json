@@ -6,7 +6,7 @@
         "wallet_seed": "b4f4289b0805e301147720acd04faec7d8218a7c4917dedae30212eadf8bea1e",
         "wallet_address": "nano_3xt5ixb6jg5ese56cjpe78md76htg8crmc43abw5m3aupbe6njwa6xydx1hb",
         "withdraw_threshold": 1000,
-        "earnings": 0
+        "earnings": 902
     },
     {
         "name": "Worker_2",
@@ -15,7 +15,7 @@
         "wallet_seed": "b5f948c55fe7da3dd8459308e309b9e53424e80b3d5d8bf71534b9fd0f054602",
         "wallet_address": "nano_34qpwet8r6dgh4bckt7cpwatf4ezxs1r87re4txi9e8eqop4obn3cr48jbsm",
         "withdraw_threshold": 1000,
-        "earnings": 1800
+        "earnings": 836
     },
     {
         "name": "Worker_3",
@@ -24,7 +24,7 @@
         "wallet_seed": "3f81dbe23401e9f232a1642a02a0b237e98d9fc8083ecb22dd73233e499cca38",
         "wallet_address": "nano_1a6krh3qbo7tau667dzc973zferg6y8ky1iemia7qqogzrf59aazjik4rogb",
         "withdraw_threshold": 1000,
-        "earnings": 390
+        "earnings": 862
     },
     {
         "name": "Worker_4",
@@ -33,7 +33,7 @@
         "wallet_seed": "66bd70bef12b4458b25c0d39d2ae5c62b56ad9c716618fc704354181fabb7a5d",
         "wallet_address": "nano_19idbzb1dgb5sw8wgsger3s8p8tnk91scqk7wmwjet7i3s7oc3ifmf85wnst",
         "withdraw_threshold": 1000,
-        "earnings": 1218
+        "earnings": 865
     },
     {
         "name": "Worker_5",
@@ -42,7 +42,7 @@
         "wallet_seed": "3a63edbefc1449e6dba55a139c18eb2818f3e9b453b1252ce47819780b2e4721",
         "wallet_address": "nano_1xxsxi3uahbzdn3k4biez98hekactdungfe4sw13an43ro9a85drqrp5rx49",
         "withdraw_threshold": 1000,
-        "earnings": 1200
+        "earnings": 905
     },
     {
         "name": "Worker_6",
@@ -51,7 +51,7 @@
         "wallet_seed": "91305c9017340f49c6276bbb5f48dc89b7fd7c81b83e70d804424d37cccad299",
         "wallet_address": "nano_1iy4xh1am3phb9dwo3b3dhzqne97r3eeynrsa8kz9wcjx5y9zg59iz7cqhuw",
         "withdraw_threshold": 1000,
-        "earnings": 1200
+        "earnings": 847
     },
     {
         "name": "Worker_7",
@@ -60,7 +60,7 @@
         "wallet_seed": "83c34ff2b7fbd72df25b3d13a8810e0fa077fd7d9df0f4b326614fb167d72ba9",
         "wallet_address": "nano_1jfsyymxgwixbx1yg3dstkjezubbmmojuhrcb3zyfwjdgdx39doyihgu38d7",
         "withdraw_threshold": 1000,
-        "earnings": 1200
+        "earnings": 802
     },
     {
         "name": "Worker_8",
@@ -69,7 +69,7 @@
         "wallet_seed": "a30c57e618a26f708d30d150d9e8765c8f41bc30118c641b326ee457dceb598c",
         "wallet_address": "nano_3hz533eftwe6sh6imsem7pj1gjxorkubnemobccy6z3kptbnwk4wmkzh9f1u",
         "withdraw_threshold": 1000,
-        "earnings": 1200
+        "earnings": 734
     },
     {
         "name": "Worker_9",
@@ -78,7 +78,7 @@
         "wallet_seed": "3507b747de9a49d3029871f9e13f2e38500422451ab9f6335a8d10c0365c93d6",
         "wallet_address": "nano_1bnm5ek8usi1y4165kx36cggng4ua3en1zc67o53icukc3uxc7eriq4p5n1g",
         "withdraw_threshold": 1000,
-        "earnings": 1200
+        "earnings": 1027
     },
     {
         "name": "Worker_10",
@@ -87,7 +87,7 @@
         "wallet_seed": "7800454ec8c1f7bbf8e4034ab90bd5237ad74860040b37062676314d5a73b65c",
         "wallet_address": "nano_31t966a7b6m4xc38mk7spb7xb86jqjygh3uscc4zbb6b6777butf6h1rwaup",
         "withdraw_threshold": 1000,
-        "earnings": 0
+        "earnings": 876
     },
     {
         "name": "Worker_11",
